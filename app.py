@@ -1,11 +1,12 @@
 import os
 import tempfile
-from flask import Flask, request, jsonify
-from functools import wraps
 import uuid
+from functools import wraps
 
 import firebase_admin
 from firebase_admin import credentials, auth
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from google.cloud import datastore
 
 credentials_json_content = os.environ.get("CREDENTIALS_JSON")
@@ -20,11 +21,12 @@ else:
 cred = credentials.Certificate("credentials.json")
 firebase_admin.initialize_app(cred)
 
-datastore_client = datastore.Client.from_service_account_json(
-    "credentials.json",
-    project="quizzapp-456810"
-)
+datastore_client = datastore.Client.from_service_account_json("credentials.json", project="cc-project-457519")
 app = Flask(__name__)
+CORS(app, origins=["http://localhost:3000"])
+
+
+# curl -X POST -H "Content-Type: application/json" -d '{"email": "test@example.com", "password":"secret123"}' http://localhost:5000/register
 
 
 def token_required(f):
@@ -50,7 +52,6 @@ def token_required(f):
     return decorated
 
 
-
 @app.route('/register', methods=['POST'])
 def register():
     """
@@ -58,6 +59,7 @@ def register():
     Expected JSON data: {"email": "example@gmail.com", "password": "password123"}
     """
     data = request.get_json()
+    print(data)
     email = data.get('email')
     password = data.get('password')
 
@@ -107,12 +109,7 @@ def create_set():
     set_id = str(uuid.uuid4())
     key = datastore_client.key('Set', set_id)
     entity = datastore.Entity(key=key)
-    entity.update({
-        'set_id': set_id,
-        'title': title,
-        'description': description,
-        'created_by': request.user.get('uid')
-    })
+    entity.update({'set_id': set_id, 'title': title, 'description': description, 'created_by': request.user.get('uid')})
 
     datastore_client.put(entity)
     return jsonify({'message': 'Set created', 'set_id': set_id}), 201
@@ -127,6 +124,7 @@ def list_sets():
     query = datastore_client.query(kind='Set')
     results = list(query.fetch())
     return jsonify(results), 200
+
 
 @app.route('/sets/<set_id>', methods=['PUT'])
 @token_required
@@ -187,13 +185,10 @@ def create_item(set_id):
     parent_key = datastore_client.key('Set', set_id)
     key = datastore_client.key('Item', item_id, parent=parent_key)
     entity = datastore.Entity(key=key)
-    entity.update({
-        'item_id': item_id,
-        'term': term,
-        'definition': definition
-    })
+    entity.update({'item_id': item_id, 'term': term, 'definition': definition})
     datastore_client.put(entity)
     return jsonify({'message': 'Item created', 'item_id': item_id}), 201
+
 
 @app.route('/sets/<set_id>/items', methods=['GET'])
 @token_required
@@ -205,6 +200,7 @@ def list_items(set_id):
     query = datastore_client.query(kind='Item', ancestor=parent_key)
     results = list(query.fetch())
     return jsonify(results), 200
+
 
 @app.route('/sets/<set_id>/items/<item_id>', methods=['PUT'])
 @token_required
@@ -251,5 +247,3 @@ def delete_item(set_id, item_id):
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-

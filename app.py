@@ -21,7 +21,7 @@ else:
 cred = credentials.Certificate("credentials.json")
 firebase_admin.initialize_app(cred)
 
-datastore_client = datastore.Client.from_service_account_json("credentials.json", project="cc-project-457519")
+datastore_client = datastore.Client.from_service_account_json("credentials.json", project="cc-projekt2")
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000"])
 
@@ -44,6 +44,8 @@ def token_required(f):
         try:
             decoded_token = auth.verify_id_token(token)
             request.user = decoded_token
+            request.user_uid = decoded_token['uid']
+
         except Exception as e:
             return jsonify({'error': 'Wrong or expired token'}), 401
 
@@ -80,6 +82,7 @@ def login():
     Expected JSON data: {"idToken": "token"}
     """
     data = request.get_json()
+    print(data)
     id_token = data.get('idToken')
     if not id_token:
         return jsonify({'error': 'Token is needed to login'}), 400
@@ -185,7 +188,9 @@ def create_item(set_id):
     parent_key = datastore_client.key('Set', set_id)
     key = datastore_client.key('Item', item_id, parent=parent_key)
     entity = datastore.Entity(key=key)
-    entity.update({'item_id': item_id, 'term': term, 'definition': definition})
+    entity.update({'item_id': item_id, 'term': term, 'definition': definition, 'owner_id': request.user_uid})
+    print(entity)
+    print(request.user_uid)
     datastore_client.put(entity)
     return jsonify({'message': 'Item created', 'item_id': item_id}), 201
 
@@ -193,13 +198,21 @@ def create_item(set_id):
 @app.route('/sets/<set_id>/items', methods=['GET'])
 @token_required
 def list_items(set_id):
-    """
-    Returns all items for a given set
-    """
     parent_key = datastore_client.key('Set', set_id)
     query = datastore_client.query(kind='Item', ancestor=parent_key)
     results = list(query.fetch())
-    return jsonify(results), 200
+    
+    # Convert Datastore entities to dictionaries and rename item_id to id
+    items = []
+    for entity in results:
+        if entity['owner_id'] != request.user_uid and entity['owner_id'] != 'legacy':  
+            return jsonify({'error': 'Unauthorized access'}), 403
+        item = dict(entity)
+        item['id'] = item.pop('item_id', None)
+        items.append(item)
+    
+    return jsonify(items), 200
+
 
 
 @app.route('/sets/<set_id>/items/<item_id>', methods=['PUT'])
@@ -215,6 +228,8 @@ def update_item(set_id, item_id):
     parent_key = datastore_client.key('Set', set_id)
     key = datastore_client.key('Item', item_id, parent=parent_key)
     entity = datastore_client.get(key)
+    if entity['owner_id'] != request.user_uid and entity['owner_id'] != 'legacy':  
+        return jsonify({'error': 'Unauthorized access'}), 403
 
     if entity is None:
         return jsonify({'error': 'Item does not exist'}), 404
@@ -228,6 +243,24 @@ def update_item(set_id, item_id):
     datastore_client.put(entity)
     return jsonify({'message': 'Item updated'}), 200
 
+@app.route('/sets/<set_id>/items/<item_id>', methods=['GET'])
+@token_required
+def get_item(set_id, item_id):
+    key = datastore_client.key('Item', item_id, parent=datastore_client.key('Set', set_id))
+    item = datastore_client.get(key)
+    print(item)
+    print(request.user_uid)
+    if item['owner_id'] != request.user_uid and item['owner_id'] != 'legacy':  
+        return jsonify({'error': 'Unauthorized access'}), 403
+    if not item:
+        return jsonify({'error': 'Item not found'}), 404
+    return jsonify({
+        'id': item_id,
+        'term': item['term'],
+        'definition': item['definition']
+    })
+
+
 
 @app.route('/sets/<set_id>/items/<item_id>', methods=['DELETE'])
 @token_required
@@ -238,6 +271,8 @@ def delete_item(set_id, item_id):
     parent_key = datastore_client.key('Set', set_id)
     key = datastore_client.key('Item', item_id, parent=parent_key)
     entity = datastore_client.get(key)
+    if entity['owner_id'] != request.user_uid and entity['owner_id'] != 'legacy':  
+        return jsonify({'error': 'Unauthorized access'}), 403
 
     if entity is None:
         return jsonify({'error': 'Item does not exist'}), 404
@@ -247,3 +282,13 @@ def delete_item(set_id, item_id):
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+    # query = datastore_client.query(kind='Item')
+    # results = query.fetch()
+
+    # for entity in results:
+    #     if 'owner_id' not in entity:
+    #         entity['owner_id'] = 'legacy'  # Or fetch from your auth logs
+    #         datastore_client.put(entity)
+
